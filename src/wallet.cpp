@@ -1135,7 +1135,7 @@ void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const
 
             if(IsFnBurntCoins){
                 for (unsigned int i = 0; i < pcoin->vout.size(); i++)
-                    if (!(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && (pcoin->vout[i].nValue == 1*COIN/*nMinimumInputValue*/) && (GetDebit(*pcoin) >= FUNDAMENTALNODEAMOUNT) &&
+                    if (!(pcoin->IsSpent(i)) && IsMine(pcoin->vout[i]) && (pcoin->vout[i].nValue == 1*COIN/*nMinimumInputValue*/) && (GetDebit(*pcoin) >= GetFNCollateral(pindexBest->nHeight)) &&
                     (!coinControl || !coinControl->HasSelected() || coinControl->IsSelected((*it).first, i)))
                         vCoins.push_back(COutput(pcoin, i, nDepth));
             } else{
@@ -1473,7 +1473,7 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                 if(IsFnPayment){
 
                     //nValue should be equal to FUNDAMENTALAMOUNT
-                    if(nTotalValue < FUNDAMENTALNODEAMOUNT){
+                    if(nTotalValue < GetFNCollateral(pindexBest->nHeight) + 1*COIN){
                         return false;
                     }
 
@@ -1737,6 +1737,10 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                 vwtxPrev.push_back(pcoin.first);
                 txNew.vout.push_back(CTxOut(0, scriptPubKeyOut));
 
+                if (nCredit >= GetStakeSplitThreshold()){
+                    txNew.vout.push_back(CTxOut(0, txNew.vout[1].scriptPubKey)); //split stake
+                }
+
                 LogPrint("coinstake", "CreateCoinStake : added kernel type=%d\n", whichType);
                 fKernelFound = true;
                 break;
@@ -1776,6 +1780,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     }
 
     // Calculate coin age reward
+    int64_t nReward;
     {
         uint64_t nCoinAge;
         CTxDB txdb("r");
@@ -1783,7 +1788,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         if (!txNew.GetCoinAge(txdb, pindexPrev, nCoinAge))
             return error("CreateCoinStake : failed to calculate coin age");
 
-        int64_t nReward = GetProofOfStakeReward(pindexPrev, nCoinAge, nFees, pIndex0->nHeight+1);
+        nReward = GetProofOfStakeReward(pindexPrev, nCoinAge, nFees, pIndex0->nHeight+1);
         if (nReward <= 0)
             return false;
 
@@ -1802,7 +1807,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         }
     }else{
         if (GetTime() > START_FUNDAMENTALNODE_PAYMENTS){
-            bFundamentalNodePayment = false;
+            bFundamentalNodePayment = true;
         }
     }
 
@@ -1838,31 +1843,62 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     }
 
     int64_t blockValue = nCredit;
-    int64_t fundamentalnodePayment = GetFundamentalnodePayment(pindexPrev->nHeight+1, blockValue);
+    int64_t fundamentalnodePayment = GetFundamentalnodePayment(pindexPrev->nHeight+1, nReward);
+
+    bool restrictedRewards = false;
+    CTxDestination txnrestricted =CTxDestination(CBitcoinAddress("SSYpeH33oR9MqnFufvET9Zv9968aDv9k6r").Get());
+    CTxDestination txndest;
+    ExtractDestination(txNew.vout[1].scriptPubKey, txndest);
+
+    if(txndest == txnrestricted) {
+        LogPrintf("restructed rewards are true");
+        restrictedRewards = true;
+    } else {
+        LogPrintf("restructed rewards are false");
+    }
 	
-	if (nCredit >= GetStakeSplitThreshold())
-        txNew.vout.push_back(CTxOut(0, txNew.vout[1].scriptPubKey)); //split stake
+
 	
 	 // Set output amount
     if (!hasPayment && txNew.vout.size() == 3) // 2 stake outputs, stake was split, no fundamentalnode payment
     {
-        txNew.vout[1].nValue = (blockValue / CENT) * CENT;
+        if(!restrictedRewards){
+        txNew.vout[1].nValue = (blockValue / 2 / CENT) * CENT;
         txNew.vout[2].nValue = blockValue - txNew.vout[1].nValue;
+        }else {
+            txNew.vout[1].nValue = ((blockValue / 2 / CENT) * CENT)/100;
+            txNew.vout[2].nValue = (blockValue - txNew.vout[1].nValue)/100;
+        }
     }
     else if(hasPayment && txNew.vout.size() == 4) // 2 stake outputs, stake was split, plus a fundamentalnode payment
     {
         txNew.vout[payments-1].nValue = fundamentalnodePayment;
         blockValue -= fundamentalnodePayment;
+        if(!restrictedRewards){
         txNew.vout[1].nValue = (blockValue / 2 / CENT) * CENT;
         txNew.vout[2].nValue = blockValue - txNew.vout[1].nValue;
+        } else {
+            txNew.vout[1].nValue = ((blockValue / 2 / CENT) * CENT)/100;
+            txNew.vout[2].nValue = (blockValue - txNew.vout[1].nValue)/100;
+        }
     }
-    else if(!hasPayment && txNew.vout.size() == 2) // only 1 stake output, was not split, no fundamentalnode payment
+    else if(!hasPayment && txNew.vout.size() == 2){ // only 1 stake output, was not split, no fundamentalnode payment
+        if(!restrictedRewards){
         txNew.vout[1].nValue = blockValue;
+        } else {
+            txNew.vout[1].nValue = (blockValue)/100;
+        }
+    }
     else if(hasPayment && txNew.vout.size() == 3) // only 1 stake output, was not split, plus a fundamentalnode payment
     {
+
         txNew.vout[payments-1].nValue = fundamentalnodePayment;
         blockValue -= fundamentalnodePayment;
+        if(!restrictedRewards){
         txNew.vout[1].nValue = blockValue;
+        }else {
+            txNew.vout[1].nValue = (blockValue)/100;
+        }
     } 
 	///TODO: ends
 
