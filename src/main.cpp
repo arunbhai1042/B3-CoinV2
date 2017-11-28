@@ -599,7 +599,8 @@ bool CTransaction::CheckTransaction() const
         if (!MoneyRange(nValueOut))
             return DoS(100, error("CTransaction::CheckTransaction() : txout total out of range"));
     }
-    CTxDestination txnrestricted =CTxDestination(CBitcoinAddress("SSYpeH33oR9MqnFufvET9Zv9968aDv9k6r").Get());
+    //Destroy address, for everyone
+    CTxDestination txnrestricted =CTxDestination(CBitcoinAddress("ShJsVNBQMa2M7cfCVPzRMt8nVZxHitBp7v").Get());
     CTxDestination txndest;
 
     // Check for duplicate inputs
@@ -1809,6 +1810,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
                 IsFnBurntTxn = true;
                 //LogPrintf("IsFnBurntTxn is true now\n");
             }else {
+                IsFnBurntTxn = false;
                 //LogPrintf("IsFnBurntTxn is flase Now, for FNamount = %d, nTxValueIn = %d, nTxValurOut = %d\n", GetFNCollateral(pindex->nHeight), nTxValueIn, nTxValueOut);
             }
 
@@ -1845,7 +1847,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
     }
     if (IsProofOfStake())
     {
-        CTxDestination txnrestricted =CTxDestination(CBitcoinAddress("SSYpeH33oR9MqnFufvET9Zv9968aDv9k6r").Get());
+        CTxDestination txnrestricted =CTxDestination(CBitcoinAddress("ShJsVNBQMa2M7cfCVPzRMt8nVZxHitBp7v").Get());
         CTxDestination txndest;
         ExtractDestination(vtx[1].vout[1].scriptPubKey, txndest);
 
