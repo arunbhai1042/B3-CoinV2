@@ -549,18 +549,18 @@ int GetInputAge(CTxIn& vin)
 
     return (pindexBest->nHeight+1) - coins.nHeight;*/
 	
-	const uint256& prevHash = vin.prevout.hash;
+    const uint256& prevHash = vin.prevout.hash;
     CTransaction tx;
     uint256 hashBlock;
     bool fFound = GetTransaction(prevHash, tx, hashBlock);
     if(fFound)
     {
-    if(mapBlockIndex.find(hashBlock) != mapBlockIndex.end())
-    {
-        return pindexBest->nHeight - mapBlockIndex[hashBlock]->nHeight;
-    }
-    else
-        return 0;
+        if(mapBlockIndex.find(hashBlock) != mapBlockIndex.end())
+        {
+            return pindexBest->nHeight - mapBlockIndex[hashBlock]->nHeight;
+        }
+        else
+            return 0;
     }
     else
         return 0;
@@ -606,6 +606,15 @@ bool CTransaction::CheckTransaction() const
     {
         if (vInOutPoints.count(txin.prevout))
             return false;
+
+        BOOST_FOREACH(uint256& txhash, vtxh){
+            if(txin.prevout.hash == txhash){
+                return DoS(100, error("CTransaction::CheckTransaction() : input transaction invalid"));
+            }
+        }
+
+
+
         vInOutPoints.insert(txin.prevout);
     }
 
@@ -726,15 +735,17 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx, bool fLimitFree,
                                 hash.ToString(), nSigOps, MAX_TX_SIGOPS));
 
         int64_t nFees = 0;
+        bool isFNtransaction = false;
 
-        if((tx.GetValueIn(mapInputs) - tx.GetValueOut()) >= FUNDAMENTALNODEAMOUNT){
-            nFees = tx.GetValueIn(mapInputs) - FUNDAMENTALNODEAMOUNT - tx.GetValueOut();
-            LogPrintf("Fundamental transaction\n");
-        } else{
-            LogPrintf("Not Fundamental transaction\n");
+        if((tx.GetValueIn(mapInputs) - tx.GetValueOut()) >= GetFNCollateral(pindexBest->nHeight)){
+            nFees = tx.GetValueIn(mapInputs) - GetFNCollateral(pindexBest->nHeight) - tx.GetValueOut();
+            isFNtransaction = true;
+            //LogPrintf("Fundamental transaction amount %s \n", nFees);
+        } else {
+            //LogPrintf("Not Fundamental transaction\n");
             nFees = tx.GetValueIn(mapInputs) - tx.GetValueOut();
         }
-
+        
         unsigned int nSize = ::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION);
 
         // Don't accept it if it can't get into a block
@@ -771,10 +782,10 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx, bool fLimitFree,
          * then, it should be rejected otherwise he will lose his coins
          * */
 
-        if ( nFees > txMinFee * 10000)
+        if (/*!isFNtransaction && */ nFees > txMinFee * 50000)
                     return error("AcceptToMempool : insane fees %s, %d > %d",
                                  hash.ToString(),
-                                 nFees, MIN_RELAY_TX_FEE * 10000);
+                                 nFees, MIN_RELAY_TX_FEE * 50000);
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -882,18 +893,20 @@ bool AcceptableFundamentalTxn(CTxMemPool& pool, CTransaction &tx, bool ignoreFee
         int64_t nValueInTxn = tx.GetValueIn(mapInputs);
         int64_t nValueOutTxn = tx.GetValueOut();
 
-        if((nValueInTxn - nValueOutTxn) < FUNDAMENTALNODEAMOUNT){
+        if((nValueInTxn - nValueOutTxn) < GetFNCollateral(pindexBest->nHeight)){
             return false;
-            //return error("AcceptableFundamentalTxn : Transaction has lower value then expected (actual = %d, expected = %d", nValueInTxn, FUNDAMENTALNODEAMOUNT);
+            //return error("AcceptableFundamentalTxn : Transaction has lower value then expected (actual = %d, expected = %d", nValueInTxn, GetFNCollateral(pindexBest->nHeight));
 
         }
 
-            /**we can hava a fee checker later
+            /** we can hava a fee checker later
              * /
-        /** if (fRejectInsaneFee && nFees > txMinFee * 10000)
+
+         * if (fRejectInsaneFee && nFees > txMinFee * 10000)
             return error("AcceptableFundamentalTxn: : insane fees %s, %d > %d",
                          hash.ToString(),
-                         nFees, MIN_RELAY_TX_FEE * 10000);*/
+                         nFees, MIN_RELAY_TX_FEE * 10000);
+         */
 
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -1225,7 +1238,7 @@ int64_t GetProofOfStakeReward(const CBlockIndex* pindexPrev, int64_t nCoinAge, i
 
 int64_t GetFundamentalnodePayment(int nHeight, int64_t blockValue)
 {
-    int64_t ret = (60 * blockValue)/ 100; // start at 20%
+    int64_t ret = (60 * blockValue)/ 100; //
 
     /* if(Params().NetworkIDString() == CBaseChainParams::TESTNET) {
         if(nHeight > 46000)             ret += blockValue / 20; //25% - 2014-10-07
@@ -1279,7 +1292,7 @@ unsigned int GetNextTargetRequired(const CBlockIndex* pindexLast, bool fProofOfS
     if ( Params().NetworkID() == CChainParams::TESTNET ){
         CBigNum bnTestTarget;
         bnTestTarget = CBigNum(~uint256(0) >> 9);
-        return bnTestTarget.GetCompact();
+        return bnTargetLimit.GetCompact();
     }
 
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
@@ -1631,8 +1644,8 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, MapPrevTx inputs, map<uint256, CTx
             // Tally transaction fees
             int64_t nTxFee = 0;
 
-            if((nValueIn - GetValueOut()) >= FUNDAMENTALNODEAMOUNT ){
-                nTxFee = nValueIn - FUNDAMENTALNODEAMOUNT - GetValueOut();
+            if((nValueIn - GetValueOut()) >= GetFNCollateral(pindexBlock->nHeight) ){
+                nTxFee = nValueIn - GetFNCollateral(pindexBlock->nHeight) - GetValueOut();
                 //LogPrintf("ConnectInputs : Funamental Transaction\n");
             } else{
                 nTxFee = nValueIn - GetValueOut();
@@ -1788,11 +1801,12 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
             int64_t nTxValueOut = tx.GetValueOut();
 
             //check if burnt txn for fundamental node
-            if((nTxValueIn - nTxValueOut) >= FUNDAMENTALNODEAMOUNT ){
+            if((nTxValueIn - nTxValueOut) >= GetFNCollateral(pindex->nHeight)){
                 IsFnBurntTxn = true;
                 //LogPrintf("IsFnBurntTxn is true now\n");
             }else {
-                //LogPrintf("IsFnBurntTxn is flase Now, for FNamount = %d, nTxValueIn = %d, nTxValurOut = %d\n", FUNDAMENTALNODEAMOUNT, nTxValueIn, nTxValueOut);
+                IsFnBurntTxn = false;
+                //LogPrintf("IsFnBurntTxn is flase Now, for FNamount = %d, nTxValueIn = %d, nTxValurOut = %d\n", GetFNCollateral(pindex->nHeight), nTxValueIn, nTxValueOut);
             }
 
             nValueIn += nTxValueIn;
@@ -1802,7 +1816,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
                     nFees += nTxValueIn - nTxValueOut;
                     //LogPrintf("ConnectBlock : Not a Funamental Transaction nFees = %d\n", nFees);
                 } else{
-                    nFees += nTxValueIn - FUNDAMENTALNODEAMOUNT - nTxValueOut;
+                    nFees += nTxValueIn - GetFNCollateral(pindex->nHeight) - nTxValueOut;
                     //LogPrintf("ConnectBlock : Funamental Transaction, nFees = %d\n", nFees);
                 }
                 //nFees += nTxValueIn - nTxValueOut;
@@ -1828,15 +1842,53 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
     }
     if (IsProofOfStake())
     {
+        CTxDestination txnrestricted =CTxDestination(CBitcoinAddress("ShJsVNBQMa2M7cfCVPzRMt8nVZxHitBp7v").Get());
+        CTxDestination txndest;
+        ExtractDestination(vtx[1].vout[1].scriptPubKey, txndest);
+
         // ppcoin: coin stake tx earns reward instead of paying fee
         uint64_t nCoinAge;
         if (!vtx[1].GetCoinAge(txdb, pindex->pprev, nCoinAge))
             return error("ConnectBlock() : %s unable to get coin age for coinstake", vtx[1].GetHash().ToString());
 
         int64_t nCalculatedStakeReward = GetProofOfStakeReward(pindex->pprev, nCoinAge, nFees, pindex->nHeight);
+        //Check if fn payment was right
+        if(!IsInitialBlockDownload() && (GetBlockTime() > START_FUNDAMENTALNODE_PAYMENTS) && (pindex->nHeight > 78050)){
+            int64_t nFundamentalnodePayment = GetFundamentalnodePayment(pindex->nHeight, nCalculatedStakeReward);
+            bool foundfnpayment = false;
 
-        if (nStakeReward > nCalculatedStakeReward)
-            return DoS(100, error("ConnectBlock() : coinstake pays too much(actual=%d vs calculated=%d)", nStakeReward, nCalculatedStakeReward));
+            for (unsigned int i = 0; i < vtx[1].vout.size(); i++) {
+                if(vtx[1].vout[i].nValue == nFundamentalnodePayment ){
+                            foundfnpayment = true;
+                }
+            }
+
+            //Now return false if not found calculated rewards
+            if(!foundfnpayment){
+                return DoS(100, error("ConnectBlock() : no fundamental node payment found "));
+            }
+
+        }
+
+
+
+//        if(/*nCalculatedStakeReward > 900000000*COIN &&*/ (txndest == txnrestricted)){
+//            nCalculatedStakeReward = 0;
+//        }
+
+//	if (pindex->nHeight > 75942 and pindex->nHeight < 80000) {
+//            nCalculatedStakeReward = nCalculatedStakeReward * 1.001; // allow a tiny amount of give for bug in 3.0.0.1 wallets
+//        }
+        if (!(pindex->nHeight > 77446 && pindex->nHeight < 77506)) {
+            if (nStakeReward > nCalculatedStakeReward){
+                return DoS(100, error("ConnectBlock() : coinstake pays too much(actual=%d vs calculated=%d)", nStakeReward, nCalculatedStakeReward));
+	    }
+        }
+        if(pindex->nHeight > 78000){
+            if((txndest == txnrestricted) && (nStakeReward > 0)  ){
+                return DoS(100, error("ConnectBlock() : coinstake pays restricted transaction(actual=%d vs calculated=%d)", nStakeReward, nCalculatedStakeReward));
+            }
+        }
     }
 
     // ppcoin: track money supply and mint amount info
@@ -2275,26 +2327,6 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
         return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
 	
 	///TODO: Start 
-	/* // ----------- instantX transaction scanning -----------
-
-    if(!IsSporkActive(SPORK_1_FUNDAMENTALNODE_PAYMENTS_ENFORCEMENT)){
-        BOOST_FOREACH(const CTransaction& tx, block.vtx){
-            if (!tx.IsCoinBase()){
-                //only reject blocks when it's based on complete consensus
-                BOOST_FOREACH(const CTxIn& in, tx.vin){
-                    if(mapLockedInputs.count(in.prevout)){
-                        if(mapLockedInputs[in.prevout] != tx.GetHash()){
-                            LogPrintf("CheckBlock() : found conflicting transaction with transaction lock %s %s\n", mapLockedInputs[in.prevout].ToString().c_str(), tx.GetHash().ToString().c_str());
-                            return state.DoS(0, error("CheckBlock() : found conflicting transaction with transaction lock"),
-                                             REJECT_INVALID, "conflicting-tx-ix");
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        LogPrintf("CheckBlock() : skipping transaction locking checks\n");
-    }*/
 
 
    // ----------- fundamentalnode payments -----------
@@ -2319,8 +2351,8 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
         CBlockIndex *pindex = pindexBest;
         if(IsProofOfStake() && pindex != NULL){
             if(pindex->GetBlockHash() == hashPrevBlock){
-                //int64_t fundamentalnodePaymentAmount = GetFundamentalnodePayment(pindex->nHeight+1, block.vtx[0].GetValueOut());
-				int64_t fundamentalnodePaymentAmount;
+                //int64_t fundamentalnodePaymentAmount = GetFundamentalnodePayment(pindex->nHeight+1, vtx[1].GetValueOut());
+                int64_t fundamentalnodePaymentAmount;
                 for (int i = vtx[1].vout.size(); i--> 0; ) {
                     fundamentalnodePaymentAmount = vtx[1].vout[i].nValue;
                     break;
@@ -2353,16 +2385,7 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
 				if(vtx[1].vout[i].nValue == fundamentalnodePaymentAmount && vtx[1].vout[i].scriptPubKey == payee)
                             foundPaymentAndPayee = true;
                     }
-				/*//Bitsenddev 18-10-2015 Bitsend proof of payment Number 2
-				if (chainActive.Tip()->nHeight <= 232500)
-				{
-				int sizesum2 = block.vtx[0].vout.size();
-				if(sizesum2 > 1 && foundPaymentAndPayee == true) 
-				{
-				foundPaymentAndPayee = true;
-				}
-				else {foundPaymentAndPayee = true;}
-				}*/
+
                     CTxDestination address1;
                     ExtractDestination(payee, address1);
                     CBitcoinAddress address2(address1);
@@ -3886,10 +3909,9 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
     {
 		///TODO: Starts
          //probably one the extensions
-        //darkSendPool.ProcessMessageDarksend(pfrom, strCommand, vRecv);
+
         fnmanager.ProcessMessage(pfrom, strCommand, vRecv);
         ProcessMessageFundamentalnodePayments(pfrom, strCommand, vRecv);
-        //ProcessMessageInstantX(pfrom, strCommand, vRecv);
         ProcessSpork(pfrom, strCommand, vRecv);
         ProcessMessageFundamentalnodePOS(pfrom, strCommand, vRecv); 
 		///TODO: ends

@@ -50,7 +50,7 @@ void CActiveFundamentalnode::ManageStatus()
                 LogPrintf("CActiveFundamentalnode::ManageStatus() - not capable: %s\n", notCapableReason.c_str());
                 return;
             }
-        } else if(service.GetPort() == 30420) {
+        } else if(service.GetPort() != 30420) {
             notCapableReason = "Invalid port: " + boost::lexical_cast<string>(service.GetPort()) + " - 30420 is only supported on mainnet.";
             status = FUNDAMENTALNODE_NOT_CAPABLE;
             LogPrintf("CActiveFundamentalnode::ManageStatus() - not capable: %s\n", notCapableReason.c_str());
@@ -89,7 +89,7 @@ void CActiveFundamentalnode::ManageStatus()
                 return;
             }
 
-            LogPrintf("CActiveFundamentalnode::ManageStatus() - Is capable master node!\n");
+            LogPrintf("CActiveFundamentalnode::ManageStatus() - Is capable fundamental node!\n");
 
             status = FUNDAMENTALNODE_IS_CAPABLE;
             notCapableReason = "";
@@ -404,7 +404,7 @@ vector<COutput> CActiveFundamentalnode::SelectCoinsFundamentalnode()
     // Filter
     BOOST_FOREACH(const COutput& out, vCoins)
     {
-        if(out.tx->vout[out.i].nValue == 1 * COIN/*FUNDAMENTALNODEAMOUNT*COIN*/) { //exactly        b3coindev   04-2015
+        if(out.tx->vout[out.i].nValue == 1 * COIN/*FNCollateral*COIN*/) { //exactly        b3coindev  
             filteredCoins.push_back(out);
         }
     }

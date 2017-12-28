@@ -526,22 +526,7 @@ CFundamentalnode* CFundamentalnodeMan::GetFundamentalnodeByRank(int nRank, int64
 void CFundamentalnodeMan::ProcessFundamentalnodeConnections()
 {
     //Not Implemented
-    /* //we don't care about this for regtest
-    if(RegTest()) return;
 
-    LOCK(cs_vNodes);
-
-    if(!darkSendPool.pSubmittedToFundamentalnode) return;
-
-    BOOST_FOREACH(CNode* pnode, vNodes)
-    {
-        if(darkSendPool.pSubmittedToFundamentalnode->addr == pnode->addr) continue;
-
-        if(pnode->fDarkSendMaster){
-            LogPrintf("Closing Fundamentalnode connection %s \n", pnode->addr.ToString().c_str());
-            pnode->CloseSocketDisconnect();
-        }
-    } */
 }
 
 void CFundamentalnodeMan::ProcessMessage(CNode* pfrom, std::string& strCommand, CDataStream& vRecv)
@@ -662,7 +647,30 @@ void CFundamentalnodeMan::ProcessMessage(CNode* pfrom, std::string& strCommand, 
         // make sure the vout that was signed is related to the transaction that spawned the Fundamentalnode
         //  - this is expensive, so it's only done once per Fundamentalnode
         CTransaction tx;
-        if(!fnSigner.IsVinAssociatedWithPubkey(vin, pubkey, tx)) {
+        uint256 hashBlock;
+        if(fnSigner.IsVinAssociatedWithPubkey(vin, pubkey, tx, hashBlock)) {
+
+            if(pindexBest->nHeight > FN_AGE_ENFORCE_HEIGHT){
+
+                int fn_input_blockheight = 0;
+
+                if(mapBlockIndex.find(hashBlock) != mapBlockIndex.end())
+                {
+                    fn_input_blockheight = pindexBest->nHeight - mapBlockIndex[hashBlock]->nHeight;
+                }
+                else{
+                    fn_input_blockheight = 0;}
+
+                //Now return flase if age voilation
+                if(fn_input_blockheight > BLOCK_AGE_THRESHOLD){
+                    LogPrintf("fne -Age voilation \n");
+                    return;
+                }
+
+            }
+
+        }
+        else{
             LogPrintf("fne - Got mismatched pubkey and vin Fehler1\n");
             pfrom->Misbehaving( 100);
             return;
@@ -724,16 +732,6 @@ void CFundamentalnodeMan::ProcessMessage(CNode* pfrom, std::string& strCommand, 
         } else {
             LogPrintf("fne - Rejected Fundamentalnode entry %s\n", addr.ToString().c_str());
 
-            LogPrintf("dne - %s from %s  was not accepted into the memory pool\n", tx.GetHash().ToString().c_str(),
-                    pfrom->addr.ToString().c_str());
-            /* int nDoS = 0;
-            if (state.IsInvalid(nDoS))
-            {
-                LogPrintf("dsee - %s from %s  was not accepted into the memory pool\n", tx.GetHash().ToString().c_str(),
-                    pfrom->addr.ToString().c_str());
-                if (nDoS > 0)
-                    Misbehaving(pfrom->GetId(), nDoS);
-            } */
         }
     }
 
@@ -745,7 +743,7 @@ void CFundamentalnodeMan::ProcessMessage(CNode* pfrom, std::string& strCommand, 
         bool stop;
         vRecv >> vin >> vchSig >> sigTime >> stop;
 
-        //LogPrintf("fnep - Received: vin: %s sigTime: %lld stop: %s\n", vin.ToString().c_str(), sigTime, stop ? "true" : "false");
+        LogPrintf("fnep - Received: vin: %s sigTime: %lld stop: %s\n", vin.ToString().c_str(), sigTime, stop ? "true" : "false");
 
         if (sigTime > GetAdjustedTime() + 60 * 60) {
             LogPrintf("fnep - Signature rejected, too far into the future %s\n", vin.ToString().c_str());
@@ -916,6 +914,7 @@ void CFundamentalnodeMan::Remove(CTxIn vin)
             vFundamentalnodes.erase(it);
             break;
         }
+        ++it;
     }
 }
 
